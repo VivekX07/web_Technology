@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <title>Email Spam Classifier</title>
+  <link rel="stylesheet" href="styles.css" />
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <!-- Font Awesome for icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+
+<body>
+  <header class="main-header">
+    <div class="container">
+      <div class="logo">
+        <i class="fas fa-shield-alt"></i>
+        <span>SpamGuard</span>
+      </div>
+      <nav>
+        <ul>
+          <li><a href="#home" class="nav-link">Home</a></li>
+          <li><a href="#about" class="nav-link">About</a></li>
+          <li><a href="#contact" class="nav-link">Contact</a></li>
+        </ul>
+      </nav>
+      <button id="themeToggle" class="theme-toggle" aria-label="Toggle dark mode">
+        <i class="fas fa-moon"></i>
+      </button>
+    </div>
+  </header>
+
+  <main>
+    <section class="container">
+      <article class="card">
+        <header class="card-header">
+          <h1>Email Spam Classifier</h1>
+          <p>Analyze your email to detect potential spam risks in real-time.</p>
+        </header>
+
+        <div class="card-content">
+          <div class="input-group">
+            <label for="emailContent">Email Content</label>
+            <textarea id="emailContent" placeholder="Paste your email content here..." aria-describedby="charCounter" aria-label="Email content input"></textarea>
+            <div class="char-counter" id="charCounter" role="status" aria-live="polite">0 / 5000</div>
+          </div>
+          
+          <div class="analysis-options">
+            <div class="option">
+              <input type="checkbox" id="realTimeCheck" checked>
+              <label for="realTimeCheck">Real-time analysis</label>
+            </div>
+            <div class="option">
+              <input type="checkbox" id="highlightKeywords">
+              <label for="highlightKeywords">Highlight spam keywords</label>
+            </div>
+          </div>
+        </div>
+
+        <footer class="card-footer">
+          <div class="buttons">
+            <button id="checkButton" class="primary-btn" disabled aria-label="Check for spam">
+              <i class="fas fa-search"></i> Check Spam
+            </button>
+            <button id="clearButton" class="secondary-btn" aria-label="Clear the email content">
+              <i class="fas fa-trash-alt"></i> Clear
+            </button>
+          </div>
+
+          <div id="result" class="hidden" role="alert"></div>
+          
+          <div id="detailedAnalysis" class="detailed-analysis hidden">
+            <h3>Detailed Analysis</h3>
+            <div class="analysis-content"></div>
+          </div>
+        </footer>
+      </article>
+      
+      <div class="info-card">
+        <h3><i class="fas fa-lightbulb"></i> Tips for Identifying Spam</h3>
+        <ul>
+          <li>Check for suspicious sender addresses</li>
+          <li>Be wary of urgent requests or threats</li>
+          <li>Look for grammatical errors and typos</li>
+          <li>Hover over links before clicking</li>
+          <li>Be cautious with attachments</li>
+        </ul>
+      </div>
+    </section>
+  </main>
+
+  <footer class="main-footer">
+    <div class="container">
+      <p>© 2025 SpamGuard | All Rights Reserved</p>
+      <div class="social-links">
+        <a href="#" aria-label="GitHub"><i class="fab fa-github"></i></a>
+        <a href="#" aria-label="Twitter"><i class="fab fa-twitter"></i></a>
+        <a href="#" aria-label="LinkedIn"><i class="fab fa-linkedin"></i></a>
+      </div>
+    </div>
+  </footer>
+
+  <script src="script.js"></script>
+</body>
+</html>
