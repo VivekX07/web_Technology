@@ -9,25 +9,23 @@ document.addEventListener('DOMContentLoaded', function() {
     const realTimeCheckbox = document.getElementById('realTimeCheck');
     const highlightKeywordsCheckbox = document.getElementById('highlightKeywords');
     const detailedAnalysisDiv = document.getElementById('detailedAnalysis');
+    const scanHistoryDiv = document.getElementById('scanHistory');
     
-    // Backend API URL - change this to match your server
-    const API_URL = 'http://localhost:3000/api/check-spam';
+    // Firestore setup (from window object initialized in index.html)
+    const { db, firestoreActions } = window;
+    const { collection, addDoc, query, orderBy, limit, onSnapshot, serverTimestamp } = firestoreActions;
     
-    // Spam keywords for client-side highlighting
-    const spamKeywords = [
-        "winner", "free", "urgent", "claim now", "limited time", 
-        "exclusive offer", "cash prize", "congratulations", "lottery", 
-        "million dollars", "discount", "act now", "risk-free", 
-        "guaranteed", "best price", "buy now", "click here", 
-        "don't delete", "earn money", "fast cash", "investment", 
-        "no risk", "special promotion", "viagra", "pharmacy",
-        "weight loss", "enlargement", "miracle", "cure", "casino",
-        "jackpot", "prize", "inheritance", "nigerian", "prince",
-        "bank transfer", "offshore", "loan", "credit", "debt",
-        "refinance", "mortgage", "insurance", "rates", "pills"
-    ];
+    // Enhanced Spam keywords with weights
+    const spamCategories = {
+        urgency: { weight: 1.5, words: ["urgent", "act now", "limited time", "immediate", "asap", "expires", "last chance"] },
+        money: { weight: 2.0, words: ["winner", "free", "claim now", "cash prize", "congratulations", "lottery", "million dollars", "earn money", "fast cash", "investment", "inheritance", "nigerian prince", "bank transfer", "loan", "debt"] },
+        marketing: { weight: 1.2, words: ["exclusive offer", "discount", "best price", "buy now", "special promotion", "save big", "incredible deal"] },
+        suspicious: { weight: 1.8, words: ["click here", "don't delete", "risk-free", "guaranteed", "viagra", "pharmacy", "pills", "miracle cure", "casino", "jackpot"] }
+    };
     
-    // Debounce function to limit how often a function can be called
+    const allSpamKeywords = Object.values(spamCategories).flatMap(cat => cat.words);
+    
+    // Debounce function
     function debounce(func, wait) {
         let timeout;
         return function(...args) {
@@ -36,354 +34,232 @@ document.addEventListener('DOMContentLoaded', function() {
         };
     }
     
-    // Initialize theme from localStorage or system preference
+    // Theme logic
     function initTheme() {
-        const savedTheme = localStorage.getItem('theme');
-        if (savedTheme) {
-            document.documentElement.setAttribute('data-theme', savedTheme);
-            updateThemeIcon(savedTheme);
-        } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
-            document.documentElement.setAttribute('data-theme', 'dark');
-            updateThemeIcon('dark');
-        }
+        const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+        document.documentElement.setAttribute('data-theme', savedTheme);
+        updateThemeIcon(savedTheme);
     }
     
-    // Update theme toggle icon based on current theme
     function updateThemeIcon(theme) {
-        if (theme === 'dark') {
-            themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-            themeToggle.setAttribute('aria-label', 'Switch to light mode');
-        } else {
-            themeToggle.innerHTML = '<i class="fas fa-moon"></i>';
-            themeToggle.setAttribute('aria-label', 'Switch to dark mode');
-        }
+        themeToggle.innerHTML = theme === 'dark' ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
     }
     
-    // Toggle between light and dark themes
     function toggleTheme() {
-        const currentTheme = document.documentElement.getAttribute('data-theme');
-        const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
-        
+        const newTheme = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
         document.documentElement.setAttribute('data-theme', newTheme);
         localStorage.setItem('theme', newTheme);
         updateThemeIcon(newTheme);
     }
     
-    // Check spam with the backend API
+    // Improved Classifier Logic
+    function analyzeEmail(email) {
+        email = email.toLowerCase();
+        let totalScore = 0;
+        let matchedKeywords = [];
+        let categoryScores = { urgency: 0, money: 0, marketing: 0, suspicious: 0 };
+        
+        // 1. Keyword Analysis
+        for (const [category, data] of Object.entries(spamCategories)) {
+            data.words.forEach(word => {
+                const regex = new RegExp('\\b' + word + '\\b', 'g');
+                const matches = email.match(regex);
+                if (matches) {
+                    const contribution = matches.length * data.weight;
+                    totalScore += contribution;
+                    categoryScores[category] += contribution;
+                    if (!matchedKeywords.includes(word)) matchedKeywords.push(word);
+                }
+            });
+        }
+        
+        // 2. Pattern Analysis
+        // Excessive punctuation
+        const exclamationCount = (email.match(/!/g) || []).length;
+        if (exclamationCount > 3) totalScore += 2;
+        
+        // ALL CAPS words (5+ chars)
+        const capsMatches = email.match(/\b[A-Z]{5,}\b/g) || [];
+        if (capsMatches.length > 2) totalScore += capsMatches.length * 0.5;
+        
+        // Too many links (placeholder logic)
+        const linkMatches = email.match(/https?:\/\//g) || [];
+        if (linkMatches.length > 2) totalScore += linkMatches.length;
+
+        // Normalize score to 0-100 percentage
+        const confidence = Math.min(100, Math.round((totalScore / 15) * 100));
+        
+        return {
+            isSpam: confidence > 60,
+            confidence: confidence,
+            matchedKeywords: matchedKeywords,
+            categoryScores: categoryScores,
+            patternMatches: exclamationCount + capsMatches.length + linkMatches.length
+        };
+    }
+    
+    // Check spam and save to Firestore
     async function checkSpam() {
         const email = emailTextarea.value.trim();
-        
         if (!email) return;
         
-        // Disable button and show checking state
         checkButton.disabled = true;
-        checkButton.innerHTML = '<span class="spinner"></span>Checking...';
+        checkButton.innerHTML = '<span class="spinner"></span>Analyzing...';
         resultDiv.classList.add('hidden');
         detailedAnalysisDiv.classList.add('hidden');
         
         try {
-            // Send the email content to the backend
-            const response = await fetch(API_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ emailContent: email }),
-            });
+            // Perform improved local analysis
+            const data = analyzeEmail(email);
             
-            if (!response.ok) {
-                throw new Error(`Server error: ${response.status}`);
+            // Save to Firestore
+            if (db) {
+                try {
+                    await addDoc(collection(db, "scans"), {
+                        content: email.substring(0, 200), // Only store preview for privacy/storage
+                        isSpam: data.isSpam,
+                        confidence: data.confidence,
+                        timestamp: serverTimestamp()
+                    });
+                } catch (err) {
+                    console.error("Firestore Error:", err);
+                }
             }
             
-            const data = await response.json();
             displayResult(data);
             displayDetailedAnalysis(data);
         } catch (error) {
-            console.error('Error:', error);
+            console.error('Analysis Error:', error);
             resultDiv.className = 'error';
-            resultDiv.innerHTML = `
-                <div class="result-icon"><i class="fas fa-exclamation-triangle"></i></div>
-                <div class="result-text">
-                    <p>An error occurred while checking the email.</p>
-                    <p>${error.message}</p>
-                </div>
-            `;
+            resultDiv.innerHTML = `<div class="result-icon"><i class="fas fa-exclamation-triangle"></i></div><p>Error analyzing email.</p>`;
             resultDiv.classList.remove('hidden');
         } finally {
-            // Reset button
             checkButton.disabled = false;
             checkButton.innerHTML = '<i class="fas fa-search"></i> Check Spam';
         }
     }
     
-    // Real-time spam check (simplified version for client-side)
     const realTimeSpamCheck = debounce(function() {
-        if (!realTimeCheckbox.checked) return;
-        
-        const email = emailTextarea.value.trim();
-        if (email.length < 50) {
-            resultDiv.classList.add('hidden');
-            return;
-        }
-        
-        // Simple client-side check
-        let spamScore = 0;
-        let matchedWords = [];
-        
-        // Check for spam keywords
-        spamKeywords.forEach(word => {
-            const regex = new RegExp('\\b' + word + '\\b', 'i');
-            if (regex.test(email)) {
-                spamScore += 1;
-                matchedWords.push(word);
-            }
-        });
-        
-        // Check for excessive exclamation marks
-        const exclamationCount = (email.match(/!/g) || []).length;
-        if (exclamationCount > 3) {
-            spamScore += 1;
-        }
-        
-        // Check for ALL CAPS sections
-        const capsRegex = /\b[A-Z]{5,}\b/g;
-        const capsMatches = email.match(capsRegex);
-        if (capsMatches && capsMatches.length > 0) {
-            spamScore += 1;
-        }
-        
-        // Determine result based on score
-        let resultClass, resultIcon, resultText;
-        if (spamScore >= 3) {
-            resultClass = 'spam';
-            resultIcon = '<i class="fas fa-exclamation-circle"></i>';
-            resultText = 'This email appears to be spam!';
-        } else if (spamScore > 0) {
-            resultClass = 'warning';
-            resultIcon = '<i class="fas fa-exclamation-triangle"></i>';
-            resultText = 'This email contains some suspicious elements.';
-        } else {
-            resultClass = 'not-spam';
-            resultIcon = '<i class="fas fa-check-circle"></i>';
-            resultText = 'This email appears to be legitimate.';
-        }
-        
-        // Display result
-        resultDiv.className = resultClass;
-        resultDiv.innerHTML = `
-            <div class="result-icon">${resultIcon}</div>
-            <div class="result-text">
-                <p>${resultText}</p>
-                ${matchedWords.length > 0 ? `<p>Suspicious elements: ${matchedWords.join(', ')}</p>` : ''}
-                <p>This is a preliminary check. For a detailed analysis, click "Check Spam".</p>
-            </div>
-        `;
-        resultDiv.classList.remove('hidden');
-        
-        // Highlight keywords if option is checked
-        if (highlightKeywordsCheckbox.checked && matchedWords.length > 0) {
-            highlightKeywords(matchedWords);
-        }
+        if (!realTimeCheckbox.checked || emailTextarea.value.length < 20) return;
+        const data = analyzeEmail(emailTextarea.value);
+        displayResult(data, true);
     }, 500);
     
-    // Display detailed result from API
-    function displayResult(data) {
-        let resultClass, resultIcon, resultTitle;
-        
-        if (data.isSpam) {
-            resultClass = 'spam';
-            resultIcon = '<i class="fas fa-exclamation-circle"></i>';
-            resultTitle = 'This is a SPAM email!';
-        } else if (data.confidence > 20) {
-            resultClass = 'warning';
-            resultIcon = '<i class="fas fa-exclamation-triangle"></i>';
-            resultTitle = 'This email contains suspicious elements.';
-        } else {
-            resultClass = 'not-spam';
-            resultIcon = '<i class="fas fa-check-circle"></i>';
-            resultTitle = 'This email appears to be legitimate.';
-        }
+    function displayResult(data, isPreliminary = false) {
+        let resultClass = data.isSpam ? 'spam' : (data.confidence > 30 ? 'warning' : 'not-spam');
+        let resultIcon = data.isSpam ? 'exclamation-circle' : (data.confidence > 30 ? 'exclamation-triangle' : 'check-circle');
+        let resultTitle = data.isSpam ? 'Highly Likely Spam' : (data.confidence > 30 ? 'Suspicious Content' : 'Appears Legitimate');
         
         resultDiv.className = resultClass;
         resultDiv.innerHTML = `
-            <div class="result-icon">${resultIcon}</div>
+            <div class="result-icon"><i class="fas fa-${resultIcon}"></i></div>
             <div class="result-text">
-                <p>${resultTitle}</p>
-                <p>Spam confidence: ${data.confidence}%</p>
-                ${data.matchedKeywords && data.matchedKeywords.length > 0 ? 
-                    `<p>Suspicious keywords detected:</p>
-                    <ul>
-                        ${data.matchedKeywords.map(keyword => `<li>${keyword}</li>`).join('')}
-                    </ul>` : ''}
+                <p>${resultTitle} (${data.confidence}%)</p>
+                ${isPreliminary ? '<p class="small">Click "Check Spam" for detailed report.</p>' : ''}
             </div>
         `;
         resultDiv.classList.remove('hidden');
         
-        // Highlight keywords if option is checked
-        if (highlightKeywordsCheckbox.checked && data.matchedKeywords && data.matchedKeywords.length > 0) {
-            highlightKeywords(data.matchedKeywords);
-        }
+        if (highlightKeywordsCheckbox.checked) highlightKeywords(data.matchedKeywords);
     }
     
-    // Display detailed analysis
     function displayDetailedAnalysis(data) {
         const analysisContent = detailedAnalysisDiv.querySelector('.analysis-content');
         analysisContent.innerHTML = '';
         
-        // Create analysis items
         const items = [
-            {
-                title: 'Spam Confidence',
-                value: `${data.confidence}%`,
-                meter: data.confidence
-            },
-            {
-                title: 'Suspicious Keywords',
-                value: data.matchedKeywords ? data.matchedKeywords.length : 0,
-                meter: data.matchedKeywords ? Math.min(100, data.matchedKeywords.length * 10) : 0
-            },
-            {
-                title: 'Pattern Matches',
-                value: data.patternMatches || 0,
-                meter: data.patternMatches ? Math.min(100, data.patternMatches * 20) : 0
-            },
-            {
-                title: 'Overall Risk',
-                value: data.isSpam ? 'High' : (data.confidence > 20 ? 'Medium' : 'Low'),
-                meter: data.isSpam ? 90 : (data.confidence > 20 ? 50 : 10)
-            }
+            { title: 'Spam Score', value: `${data.confidence}%`, meter: data.confidence },
+            { title: 'Keywords', value: data.matchedKeywords.length, meter: Math.min(100, data.matchedKeywords.length * 10) },
+            { title: 'Patterns', value: data.patternMatches, meter: Math.min(100, data.patternMatches * 20) }
         ];
         
-        // Add items to analysis
         items.forEach(item => {
-            const element = document.createElement('div');
-            element.className = 'analysis-item';
-            element.innerHTML = `
-                <h4>${item.title}</h4>
-                <p>${item.value}</p>
-                <div class="meter-container">
-                    <div class="meter-fill" style="width: 0%"></div>
-                </div>
-            `;
-            analysisContent.appendChild(element);
-            
-            // Animate meter fill after a short delay
-            setTimeout(() => {
-                element.querySelector('.meter-fill').style.width = `${item.meter}%`;
-            }, 100);
+            const el = document.createElement('div');
+            el.className = 'analysis-item';
+            el.innerHTML = `<h4>${item.title}</h4><p>${item.value}</p><div class="meter-container"><div class="meter-fill" style="width: 0%"></div></div>`;
+            analysisContent.appendChild(el);
+            setTimeout(() => el.querySelector('.meter-fill').style.width = `${item.meter}%`, 100);
         });
         
         detailedAnalysisDiv.classList.remove('hidden');
     }
     
-    // Highlight spam keywords in the textarea
     function highlightKeywords(keywords) {
-        if (!keywords || keywords.length === 0) return;
+        const existing = document.querySelector('.highlighted-content');
+        if (existing) existing.remove();
+        if (!keywords.length || !highlightKeywordsCheckbox.checked) return;
         
-        // Create a temporary div to hold the content
-        const tempDiv = document.createElement('div');
-        tempDiv.textContent = emailTextarea.value;
-        let html = tempDiv.innerHTML;
+        const div = document.createElement('div');
+        div.className = 'highlighted-content';
+        let html = emailTextarea.value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
         
-        // Highlight each keyword
-        keywords.forEach(keyword => {
-            const regex = new RegExp('\\b(' + keyword + ')\\b', 'gi');
+        keywords.forEach(word => {
+            const regex = new RegExp('\\b(' + word + ')\\b', 'gi');
             html = html.replace(regex, '<span class="highlight">$1</span>');
         });
         
-        // Create a temporary textarea to display the highlighted content
-        const highlightedDiv = document.createElement('div');
-        highlightedDiv.className = 'highlighted-content';
-        highlightedDiv.innerHTML = html;
-        highlightedDiv.style.cssText = `
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            padding: ${window.getComputedStyle(emailTextarea).padding};
-            font-family: ${window.getComputedStyle(emailTextarea).fontFamily};
-            font-size: ${window.getComputedStyle(emailTextarea).fontSize};
-            line-height: ${window.getComputedStyle(emailTextarea).lineHeight};
-            white-space: pre-wrap;
-            overflow: hidden;
-            background: transparent;
-            pointer-events: none;
-        `;
+        div.innerHTML = html;
+        Object.assign(div.style, {
+            position: 'absolute', top: '0', left: '0', width: '100%', height: '100%',
+            padding: window.getComputedStyle(emailTextarea).padding,
+            font: window.getComputedStyle(emailTextarea).font,
+            whiteSpace: 'pre-wrap', pointerEvents: 'none', color: 'transparent'
+        });
         
-        // Position the textarea container as relative if it's not already
-        const textareaContainer = emailTextarea.parentElement;
-        if (window.getComputedStyle(textareaContainer).position !== 'relative') {
-            textareaContainer.style.position = 'relative';
-        }
-        
-        // Remove any existing highlighted content
-        const existingHighlight = textareaContainer.querySelector('.highlighted-content');
-        if (existingHighlight) {
-            textareaContainer.removeChild(existingHighlight);
-        }
-        
-        // Add the highlighted content
-        textareaContainer.appendChild(highlightedDiv);
+        emailTextarea.parentElement.style.position = 'relative';
+        emailTextarea.parentElement.appendChild(div);
     }
     
-    // Clear text and results
+    // Firestore History Listener
+    function listenToHistory() {
+        if (!db) return;
+        const q = query(collection(db, "scans"), orderBy("timestamp", "desc"), limit(10));
+        onSnapshot(q, (snapshot) => {
+            scanHistoryDiv.innerHTML = '';
+            if (snapshot.empty) {
+                scanHistoryDiv.innerHTML = '<p class="empty-history">No recent scans.</p>';
+                return;
+            }
+            snapshot.forEach((doc) => {
+                const data = doc.data();
+                const item = document.createElement('div');
+                item.className = 'history-item';
+                const date = data.timestamp ? new Date(data.timestamp.seconds * 1000).toLocaleTimeString() : 'Just now';
+                item.innerHTML = `
+                    <div class="history-item-header">
+                        <span class="history-status ${data.isSpam ? 'spam' : 'not-spam'}">${data.isSpam ? 'Spam' : 'Safe'}</span>
+                        <span class="history-date">${date}</span>
+                    </div>
+                    <p class="history-preview">${data.content}</p>
+                `;
+                item.onclick = () => { emailTextarea.value = data.content; updateCharacterCount(); };
+                scanHistoryDiv.appendChild(item);
+            });
+        });
+    }
+    
     function clearText() {
         emailTextarea.value = '';
         updateCharacterCount();
         resultDiv.classList.add('hidden');
         detailedAnalysisDiv.classList.add('hidden');
-        checkButton.disabled = true;
-        
-        // Remove any highlighted content
-        const highlightedContent = document.querySelector('.highlighted-content');
-        if (highlightedContent) {
-            highlightedContent.remove();
-        }
+        const h = document.querySelector('.highlighted-content');
+        if (h) h.remove();
     }
     
-    // Update character count
     function updateCharacterCount() {
-        const length = emailTextarea.value.length;
-        charCounter.textContent = `${length} / 5000`;
-        
-        // Enable/disable check button
+        charCounter.textContent = `${emailTextarea.value.length} / 5000`;
         checkButton.disabled = !emailTextarea.value.trim();
     }
     
-    // Event Listeners
+    // Listeners
     checkButton.addEventListener('click', checkSpam);
     clearButton.addEventListener('click', clearText);
     themeToggle.addEventListener('click', toggleTheme);
+    emailTextarea.addEventListener('input', () => { updateCharacterCount(); realTimeSpamCheck(); });
     
-    emailTextarea.addEventListener('input', function() {
-        updateCharacterCount();
-        realTimeSpamCheck();
-    });
-    
-    realTimeCheckbox.addEventListener('change', function() {
-        if (this.checked && emailTextarea.value.trim().length >= 50) {
-            realTimeSpamCheck();
-        } else if (!this.checked) {
-            resultDiv.classList.add('hidden');
-        }
-    });
-    
-    highlightKeywordsCheckbox.addEventListener('change', function() {
-        const highlightedContent = document.querySelector('.highlighted-content');
-        
-        if (this.checked) {
-            // If we have a result, highlight the keywords
-            if (!resultDiv.classList.contains('hidden')) {
-                const matchedKeywords = Array.from(resultDiv.querySelectorAll('.result-text ul li'))
-                    .map(li => li.textContent);
-                highlightKeywords(matchedKeywords);
-            }
-        } else if (highlightedContent) {
-            // Remove highlighting
-            highlightedContent.remove();
-        }
-    });
-    
-    // Initialize
+    // Init
     initTheme();
     updateCharacterCount();
+    listenToHistory();
 });

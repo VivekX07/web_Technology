@@ -80,15 +80,24 @@
         </footer>
       </article>
       
-      <div class="info-card">
-        <h3><i class="fas fa-lightbulb"></i> Tips for Identifying Spam</h3>
-        <ul>
-          <li>Check for suspicious sender addresses</li>
-          <li>Be wary of urgent requests or threats</li>
-          <li>Look for grammatical errors and typos</li>
-          <li>Hover over links before clicking</li>
-          <li>Be cautious with attachments</li>
-        </ul>
+      <div class="sidebar">
+        <div class="info-card">
+          <h3><i class="fas fa-lightbulb"></i> Tips for Identifying Spam</h3>
+          <ul>
+            <li>Check for suspicious sender addresses</li>
+            <li>Be wary of urgent requests or threats</li>
+            <li>Look for grammatical errors and typos</li>
+            <li>Hover over links before clicking</li>
+            <li>Be cautious with attachments</li>
+          </ul>
+        </div>
+
+        <div class="history-card">
+          <h3><i class="fas fa-history"></i> Recent Scans</h3>
+          <div id="scanHistory" class="scan-history">
+            <p class="empty-history">No recent scans found.</p>
+          </div>
+        </div>
       </div>
     </section>
   </main>
@@ -104,6 +113,32 @@
     </div>
   </footer>
 
-  <script src="script.js"></script>
+  <!-- Firebase SDK -->
+  <script type="module">
+    // Import the functions you need from the SDKs you need
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+    import { getFirestore, collection, addDoc, query, orderBy, limit, onSnapshot, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+    // Your Firebase configuration
+    const firebaseConfig = {
+      apiKey: "AIzaSyAKhM_F7KABUFgaza3W_HcvQF1xkgkIXKM",
+      authDomain: "caloxi.firebaseapp.com",
+      projectId: "caloxi",
+      storageBucket: "caloxi.firebasestorage.app",
+      messagingSenderId: "954872017033",
+      appId: "1:954872017033:web:f08665281de09a6f555658",
+      measurementId: "G-XVZGRZGN9H"
+    };
+
+    // Initialize Firebase
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+
+    // Make db available globally for script.js
+    window.db = db;
+    window.firestoreActions = { collection, addDoc, query, orderBy, limit, onSnapshot, serverTimestamp };
+  </script>
+
+  <script src="script.js" type="module"></script>
 </body>
 </html>
